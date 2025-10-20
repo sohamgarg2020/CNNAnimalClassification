@@ -1,0 +1,6 @@
+cnn_venv/
+
+animals/
+*.zip
+~/.kaggle/
+
