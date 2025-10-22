@@ -7,15 +7,14 @@ import torchvision.transforms as transforms
 from torchsummary import summary
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-from torchvision import datasets, transforms
+from torchvision import datasets
 from torch.utils.data import DataLoader
 import os
-from torch.utils.data import random_split
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Subset
 import zipfile
 import subprocess
+import shutil
 
 
 
@@ -23,52 +22,174 @@ import subprocess
 
 
 
-device = torch.device("cpu")
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-elif torch.backends.mps.is_built() and torch.backends.mps.is_available():
+if torch.backends.mps.is_available():
     device = torch.device("mps")
+elif torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
 
+print(f"Using {device}!")
 
 transform  = transforms.Compose([
-    transforms.Resize((128, 128)),
+    transforms.Lambda(lambda img: img.convert("RGB")), #makes it so that every image has 3 channels - RGB
+    transforms.Resize((224, 224)), #has a standard pixel size 128x128
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.ColorJitter(brightness =0.1, contrast = 0.1),
     transforms.ToTensor(),
-    transforms.Normalize(
-        (0.5, 0.5, 0.5),
-        (0.5, 0.5, 0.5)
+    transforms.Normalize( #normalizing it so that the values are between -1 to 1
+        mean = (0.5, 0.5, 0.5),
+        std = (0.5, 0.5, 0.5)
     )
 ])
 
-data_zip = "animal-image-dataset-90-different-animals.zip"
-data_dir = "./animals"
+data_zip = "animals.zip"
+data_dir = "./data_animals"
 
 if not os.path.exists(data_dir):
-    print("Dataset not in directory. Downloading from Kaggle.")
+    print("Dataset not found. Downloading from Kaggle.")
+
     subprocess.run([
         "kaggle", "datasets", "download",
-        "-d", "iamsouravbanerjee/animal-image-dataset-90-different-animals",
+        "-d", "antobenedetti/animals",
         "-p", ".", "--force"
     ])
-    print("Unzipping dataset.")
+
+    print("📦 Unzipping dataset...")
     os.makedirs(data_dir, exist_ok=True)
 
-    with zipfile.ZipFile("animal-image-dataset-90-different-animals.zip", "r") as zip_ref:
+    with zipfile.ZipFile(data_zip, "r") as zip_ref:
         zip_ref.extractall(data_dir)
-    print("Dataset downloaded and extracted.")
+
+    print("Dataset downloaded and extracted successfully at:", data_dir)
 else:
     print("Dataset already exists, skipping download.")
 
-data_dir = "./animals/animals/animals"
-dataset = datasets.ImageFolder(root=data_dir, transform=transform)
+data_dir = "./data_animals/animals/"
 
-indices = list(range(len(dataset)))
-train_idx, test_idx = train_test_split(indices, test_size=0.2, random_state=42, shuffle=True)
+train_dir = os.path.join(data_dir, "train")
+test_dir = os.path.join(data_dir, "val")
 
-train_set = Subset(dataset, train_idx)
-test_set = Subset(dataset, test_idx)
+train_dataset = datasets.ImageFolder(root = train_dir, transform=transform)
+test_dataset = datasets.ImageFolder(root = test_dir, transform=transform)
 
-train_loader = DataLoader(train_set, batch_size=32, shuffle=True)
-test_loader = DataLoader(test_set, batch_size=32, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
-classes = dataset.classes
-print(f"We have {len(classes)} classes.")
+classes = train_dataset.classes
+num_classes = len(classes)
+print(f"We have {num_classes} classes.")
+
+class SimpleCNN(nn.Module):
+    def __init__(self, num_classes):
+        super(SimpleCNN, self).__init__()
+        
+        self.conv1 = nn.Conv2d(in_channels = 3, out_channels = 32, kernel_size = 3, stride=1, padding=1)
+        self.relu1 = nn.ReLU()
+        self.pool1 = nn.MaxPool2d(2, 2)
+        
+        self.conv2 = nn.Conv2d(32, 64, 3, stride=1, padding=1)
+        self.relu2 = nn.ReLU()
+        self.pool2 = nn.MaxPool2d(2, 2)
+
+        self.conv3 = nn.Conv2d(64, 128, 3, 1, 1)
+        self.relu3 = nn.ReLU()
+        self.pool3 = nn.MaxPool2d(2, 2)
+        
+        self.dropout4 = nn.Dropout(p=0.5)
+        self.fc4 = nn.Linear(128 * 28 * 28, 256)
+        self.relu4 = nn.ReLU()
+
+        self.dropout5 = nn.Dropout(p=0.5)
+        self.fc5 = nn.Linear(256, 128)
+        self.relu5 = nn.ReLU()
+
+        self.fc6 = nn.Linear(128, num_classes)
+        
+    def forward(self, x):
+
+        x = self.pool1(self.relu1(self.conv1(x)))
+        x = self.pool2(self.relu2(self.conv2(x)))
+        x = self.pool3(self.relu3(self.conv3(x)))
+
+        x = x.reshape(x.size(0), -1)
+        
+        x = self.dropout4(x)
+        x = self.relu4(self.fc4(x))
+        x = self.dropout5(x)
+        x = self.relu5(self.fc5(x))
+        x = self.fc6(x)
+        return x
+    
+    
+model = SimpleCNN(num_classes=num_classes).to(device)
+loss_func = nn.CrossEntropyLoss()
+lr = 0.008
+optimizer = torch.optim.SGD(model.parameters(), lr = lr, momentum=0.9, weight_decay=0.001)
+
+
+
+MODEL_PATH = "animal_cnn.pth"
+
+if os.path.exists(MODEL_PATH):
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    model.to(device)
+    model.eval()
+    print("Model has already been trained.")
+else:
+    print("Training model from scratch now. Get excited!")
+
+
+    epochs = 50
+    for epoch in range(epochs):
+        model.train()
+
+        for i, (images, labels) in enumerate(train_loader):
+            images = images.to(device)
+            labels = labels.to(device)
+
+            outputs = model(images)
+            loss = loss_func(outputs, labels)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            if (i + 1) % 50 == 0:
+                print(f"Epoch [{epoch+1}/{epochs}], Step [{i+1}/{len(train_loader)}], Loss: {loss.item():.4f}")
+
+        with torch.no_grad():
+            model.eval()
+            correct = 0
+            total = 0
+            all_val_loss = []
+            for images, labels in test_loader:
+                images = images.to(device)
+                labels = labels.to(device)
+                outputs = model(images)
+                total += labels.size(0)
+
+                predicted = torch.argmax(outputs, dim = 1)
+                correct += (predicted == labels).sum().item()
+                all_val_loss.append(loss_func(outputs, labels).item())
+
+            mean_val_loss = sum(all_val_loss)/ len(all_val_loss)
+            mean_val_acc = 100 * (correct/total)
+
+            print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}, Val-Loss: {mean_val_loss:.4f}, Val-acc: {mean_val_acc:.4f}%")
+
+
+    torch.save(model.state_dict(), MODEL_PATH)
+    print("Model saved to animal_cnn.pth")
+
+
+with torch.no_grad():
+    correct = 0
+    total = 0
+    for images, labels in test_loader:
+        images, labels = images.to(device), labels.to(device)
+        outputs = model(images)
+        _, predicted = torch.max(outputs, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+    print(f"Accuracy on test set: {100 * correct / total:.2f}%")

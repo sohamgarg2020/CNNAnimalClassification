@@ -1,6 +1,7 @@
 cnn_venv/
 
-animals/
+data_animals/
 *.zip
 ~/.kaggle/
 
+animal_cnn.pth
