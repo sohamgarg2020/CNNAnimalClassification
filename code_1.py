@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import torchvision
 import torchvision.transforms as transforms
 from torchsummary import summary
 import matplotlib.pyplot as plt
@@ -15,6 +14,8 @@ from torch.utils.data import Subset
 import zipfile
 import subprocess
 import shutil
+from PIL import Image
+
 
 
 
@@ -55,7 +56,7 @@ if not os.path.exists(data_dir):
         "-p", ".", "--force"
     ])
 
-    print("📦 Unzipping dataset...")
+    print("Unzipping dataset...")
     os.makedirs(data_dir, exist_ok=True)
 
     with zipfile.ZipFile(data_zip, "r") as zip_ref:
@@ -95,30 +96,43 @@ class SimpleCNN(nn.Module):
         self.conv3 = nn.Conv2d(64, 128, 3, 1, 1)
         self.relu3 = nn.ReLU()
         self.pool3 = nn.MaxPool2d(2, 2)
-        
-        self.dropout4 = nn.Dropout(p=0.5)
-        self.fc4 = nn.Linear(128 * 28 * 28, 256)
+
+        self.conv4 = nn.Conv2d(128, 256, 3, 1, 1)
         self.relu4 = nn.ReLU()
+        self.pool4 = nn.MaxPool2d(2, 2)
 
-        self.dropout5 = nn.Dropout(p=0.5)
-        self.fc5 = nn.Linear(256, 128)
+        self.conv5 = nn.Conv2d(256, 512, 3, 1, 1)
         self.relu5 = nn.ReLU()
+        self.pool5 = nn.MaxPool2d(2, 2)
 
-        self.fc6 = nn.Linear(128, num_classes)
+        
+        
+        self.dropout6 = nn.Dropout(p=0.5)
+        self.fc6 = nn.Linear(512 * 7 * 7, 256)
+        self.relu6 = nn.ReLU()
+
+        self.dropout7 = nn.Dropout(p = 0.25)
+        self.fc7 = nn.Linear(256, 128)
+        self.relu7 = nn.ReLU()
+
+        self.fc8 = nn.Linear(128, num_classes)
         
     def forward(self, x):
 
         x = self.pool1(self.relu1(self.conv1(x)))
         x = self.pool2(self.relu2(self.conv2(x)))
         x = self.pool3(self.relu3(self.conv3(x)))
+        x = self.pool4(self.relu4(self.conv4(x)))
+        x = self.pool5(self.relu5(self.conv5(x)))
+
 
         x = x.reshape(x.size(0), -1)
         
-        x = self.dropout4(x)
-        x = self.relu4(self.fc4(x))
-        x = self.dropout5(x)
-        x = self.relu5(self.fc5(x))
-        x = self.fc6(x)
+        x = self.dropout6(x)
+        x = self.relu6(self.fc6(x))
+        x = self.dropout7(x)
+        x = self.relu7(self.fc7(x))
+        x = self.fc8(x)
         return x
     
     
@@ -193,3 +207,21 @@ with torch.no_grad():
         total += labels.size(0)
         correct += (predicted == labels).sum().item()
     print(f"Accuracy on test set: {100 * correct / total:.2f}%")
+
+PREDICT_IMAGES = "test_images"
+
+def predict_image(img_path):
+    model.eval()
+    image = Image.open(os.path.join(PREDICT_IMAGES, img_path))
+    input_tensor = transform(image).unsqueeze(0).to(device)
+    with torch.no_grad():
+        output = model(input_tensor)
+        probabilities = torch.softmax(output, dim =  1)
+        pred_idx = torch.argmax(probabilities, dim = 1).item()
+
+    confidence = probabilities[0][pred_idx].item()*100
+    print(f"Predicted class for {img_path}: {classes[pred_idx]} ({confidence:.2f}% confidence)")
+
+
+for filename in os.listdir(PREDICT_IMAGES):
+    predict_image(filename)
