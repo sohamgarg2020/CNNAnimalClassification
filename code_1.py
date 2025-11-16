@@ -34,9 +34,7 @@ print(f"Using {device}!")
 
 transform  = transforms.Compose([
     transforms.Lambda(lambda img: img.convert("RGB")), #makes it so that every image has 3 channels - RGB
-    transforms.Resize((224, 224)), #has a standard pixel size 128x128
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.ColorJitter(brightness =0.1, contrast = 0.1),
+    transforms.Resize((224, 224)), #has a standard pixel size 224x224
     transforms.ToTensor(),
     transforms.Normalize( #normalizing it so that the values are between -1 to 1
         mean = (0.5, 0.5, 0.5),
@@ -224,4 +222,8 @@ def predict_image(img_path):
 
 
 for filename in os.listdir(PREDICT_IMAGES):
+    if filename.lower().endswith(".DS_Store"):
+        continue
     predict_image(filename)
+
+
